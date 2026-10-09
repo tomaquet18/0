@@ -12,7 +12,7 @@
  */
 
 import { loadCatalogModels, type CatalogSyncOptions, type SyncedModel } from "./model-catalog-sync.js";
-import type { SubagentLifecyclePayload, SubagentMessagePayload } from "@0/core";
+import { CLAUDE_CODE_PROVIDER_ID, type SubagentLifecyclePayload, type SubagentMessagePayload } from "@0/core";
 
 /** Source-qualified context window for the running direct-provider model. */
 export interface ContextLimit {
@@ -170,6 +170,9 @@ export function resolveContextLimit(
   } = {},
 ): ContextLimit | null {
   if (!identity.modelId || !identity.providerId) return null;
+  // The Claude subscription CLI takes aliases ("opus", "default") that no
+  // catalog lists; every Claude model it serves has at least a 200k window.
+  if (identity.providerId === CLAUDE_CODE_PROVIDER_ID) return { tokens: 200_000, source: "known-family" };
 
   // The published window for the running model's FAMILY — an honest, documented
   // last resort so the meter reads a real figure instead of a dead

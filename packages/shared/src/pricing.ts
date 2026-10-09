@@ -37,6 +37,13 @@ export const MANUAL_PRICING: Record<string, ModelRates> = {
   "claude-opus-4-6": { input: 15.00, output: 75.00, cachedInput: 1.50 },
   "claude-sonnet-4-6": { input: 3.00, output: 15.00, cachedInput: 0.30 },
   "claude-haiku-4-5": { input: 0.80, output: 4.00, cachedInput: 0.08 },
+  // Claude through the operator's own subscription (local claude CLI): usage
+  // is covered by the plan, never billed per token. Keys are the runtime's
+  // provider-qualified pricing ids (ClaudeSubscriptionRuntime.resolvedPricingModel).
+  "claude-code/cli-default": { input: 0, output: 0 },
+  "claude-code/opus": { input: 0, output: 0 },
+  "claude-code/sonnet": { input: 0, output: 0 },
+  "claude-code/haiku": { input: 0, output: 0 },
   // OpenAI codex alias — mirrors gpt-5.5 (OSS feed has only the bare key)
   "gpt-5.5-codex": { input: 5.00, output: 30.00 },
   // LiteLLM no longer carries this exact key; retain its last published rate.

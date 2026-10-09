@@ -2,7 +2,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { homeStateDir } from "@0/shared";
-import { ANALYTICS_LEVEL_ENV, getSmolvmWorkbenchStatus, isAdmittedSmolvmWorkbench, levelAtLeast, resolveAnalyticsLevel, createConsoleRuntime, createWorkbenchProviderBroker } from "@0/core";
+import { ANALYTICS_LEVEL_ENV, getSmolvmWorkbenchStatus, isAdmittedSmolvmWorkbench, levelAtLeast, resolveAnalyticsLevel, createConsoleRuntime, createWorkbenchProviderBroker, LlmApiRuntime } from "@0/core";
 import type { SmolvmWorkbenchApprovedImage, SmolvmWorkbenchResult } from "@0/core";
 import { currentWorkbenchAssets } from "./workbench-assets.js";
 import { mapWorkbenchCliArguments } from "./workbench-console-protocol.js";
@@ -168,7 +168,7 @@ export async function launchConfiguredWorkbench(args: readonly string[]): Promis
   const modelArgument = modelIndex >= 0 ? args[modelIndex + 1] : args.find(argument => argument.startsWith("--model="))?.slice("--model=".length);
   const runtime = createConsoleRuntime({ model: modelArgument });
   const providerId = runtime.resolvedProvider();
-  if (providerId !== "chatgpt-codex" || !config.providers.includes(providerId)) throw new Error("Isolated CLI execution requires an explicitly granted brokered chatgpt-codex provider. Host fallback is refused.");
+  if (!(runtime instanceof LlmApiRuntime) || providerId !== "chatgpt-codex" || !config.providers.includes(providerId)) throw new Error("Isolated CLI execution requires an explicitly granted brokered chatgpt-codex provider. Host fallback is refused.");
   const model = runtime.resolvedModel();
   const routing = runtime.modelSelection();
   const broker = createWorkbenchProviderBroker({ provider: providerId,

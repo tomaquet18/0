@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
 
 import { LlmApiRuntime } from "../runtime/llm-api.js";
+import { CLAUDE_CODE_PROVIDER_ID, ClaudeSubscriptionRuntime, isClaudeSubscriptionProvider } from "../runtime/claude-subscription.js";
 import { resolveCompactionThresholds, isRecoverableOutputCap, MAX_OUTPUT_CAP_CONTINUATIONS, OUTPUT_CAP_CONTINUATION_PROMPT } from "../agent/native-loop.js";
 import { contextOverflow, estimatePromptTokens, maintainContext, outputHeadroom } from "./context-maintenance.js";
 import { diag } from "../diagnostics/channel.js";
@@ -936,19 +937,44 @@ export function buildConsoleSystemPrompt(opts: {
   ].join("\n");
 }
 
+/** Runtimes the console can be built on: an API provider or the Claude subscription CLI. */
+export type ConsoleRuntime = LlmApiRuntime | ClaudeSubscriptionRuntime;
+/** {@link RuntimeConfig} whose provider may also name the Claude subscription. */
+export type ConsoleRuntimeConfig = Omit<Partial<RuntimeConfig>, "provider"> & {
+  provider?: RuntimeConfig["provider"] | typeof CLAUDE_CODE_PROVIDER_ID;
+};
+
 /**
  * Construct the production LLM client for the console and fail fast on a
  * misconfigured provider (missing API key, etc). Mirrors the pre-flight
  * `getConfigurationDiagnostics()` check `agent-runner.ts` runs before the
  * native loop.
  */
-export function createConsoleRuntime(config?: Partial<RuntimeConfig>): LlmApiRuntime {
+export function createConsoleRuntime(config?: ConsoleRuntimeConfig): ConsoleRuntime {
+  const env = { ...process.env, ...config?.env };
+  // ZERO_PROVIDER is the operator-facing pin the TUI already honours; the API
+  // runtime ignores it, so it is only consulted to select the subscription CLI.
+  const provider = config?.provider
+    ?? (env["ZERO_SELECTED_PROVIDER"]?.trim() || env["ZERO_FORCE_PROVIDER"]?.trim() || env["ZERO_PROVIDER"]?.trim() || undefined);
+  if (isClaudeSubscriptionProvider(provider)) {
+    // The local `claude` CLI under the operator's subscription: no API key,
+    // tools still execute through this engine (see runtime/cli-native.ts).
+    const runtime = new ClaudeSubscriptionRuntime({
+      ...config, provider: undefined, timeout: config?.timeout ?? 600_000,
+      // ZERO_MODEL is read by the API runtime itself; mirror it here.
+      model: config?.model ?? (env["ZERO_MODEL"]?.trim() || undefined),
+    });
+    const diagnostics = runtime.getConfigurationDiagnostics();
+    if (!diagnostics.valid) throw new Error(diagnostics.fatalError ?? `${diagnostics.providerLabel} is not available.`);
+    return runtime;
+  }
   const runtime = new LlmApiRuntime({
     type: "api",
     timeout: config?.timeout ?? 120_000,
     apiKey: config?.apiKey,
     model: config?.model,
     ...config,
+    provider: config?.provider as RuntimeConfig["provider"],
   });
   const diagnostics = runtime.getConfigurationDiagnostics();
   if (!diagnostics.valid) {
@@ -3865,6 +3891,8 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       return retire();
     },
     cleanup: () => cleanupPromise ??= (async () => {
+      // A CLI-backed runtime may hold a `claude` process parked on tool calls.
+      (config.runtime as { dispose?: () => void }).dispose?.();
       const { warnings = [] } = await retire();
       const errors: unknown[] = warnings.map(message => new Error(message));
       // Bound the MCP host close too: a wedged transport must not outlast the

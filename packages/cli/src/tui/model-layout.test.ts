@@ -332,6 +332,8 @@ describe("provider credential reporting", () => {
     const activeProviders = PROVIDERS;
     const all = providerStates(
       Object.fromEntries(activeProviders.map((info) => [info.envVars[0] ?? "", "value"])),
+      // Local-CLI providers (claude-code) are configured by a found binary.
+      () => true,
     );
     expect(configuredProviderLabels(all)).toHaveLength(activeProviders.length);
     for (const info of activeProviders) expect(credentialSummary(all)).toContain(info.label);

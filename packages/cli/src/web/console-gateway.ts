@@ -8,7 +8,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   ScopePolicy, clampOutboundBody, connectMcpServers, connectServicePlugins, eventBus, getScopeEnforcementState, isDangerousLocalRoot, normalizeScopeHostname, parseMcpConfig, sendOperatorMessage,
   type ConsoleSession, type ConsoleSessionConfig, type ConsoleSessionCheckpoint, type ConsoleScopeRequest,
-  type ConsoleTurnOutcome as EngineTurnOutcome, type LlmApiRuntime, type NativeMessage, type NativeRuntime,
+  type ConsoleTurnOutcome as EngineTurnOutcome, type ConsoleRuntime, type NativeMessage, type NativeRuntime,
   type McpHost, type OperatorQuestionAnswer, type OperatorQuestionRequest, type ScopeJson, type ToolCall,
 } from "@0/core";
 import {
@@ -91,7 +91,7 @@ type PendingDecision = { decision: DesktopConsoleDecision; resolve: (response: D
 type ManagedSession = {
   id: string; createdAt: string; updatedAt: string; role: DesktopConsoleRole; target: string;
   autonomyMode: DesktopConsoleAutonomyMode; title: string; scope?: ScopePolicy; selection: ConsoleRuntimeSelection;
-  runtime: LlmApiRuntime | null; info: ConsoleRuntimeSnapshot | null; session: ConsoleSession | null;
+  runtime: ConsoleRuntime | null; info: ConsoleRuntimeSnapshot | null; session: ConsoleSession | null;
   initialization: Promise<ConsoleSession> | null; status: DesktopConsoleSessionStatus; sequence: number;
   events: DesktopConsoleEvent[]; listeners: Set<(event: DesktopConsoleEvent) => void>;
   pending: Map<string, PendingDecision>; abort: AbortController | null; turn: Promise<void> | null; turnOwner: string | null;

@@ -37,7 +37,8 @@ import {
   type ScopedAuditEscalationRequest,
   type ConsoleSession,
   type RuntimeConfig,
-  type LlmApiRuntime,
+  type ConsoleRuntime,
+  isClaudeSubscriptionProvider,
   type NativeMessage,
   type NativeRuntime,
   type OperatorQuestionRequest,
@@ -1469,7 +1470,7 @@ export function ChatScreen({
   // live-apply path can reconfigure it in place without capturing a specific
   // runtime in a closure (a rebuild swaps the reference here).
   const runtimeRef = useDevUiRef<ReturnType<typeof createConsoleRuntime> | null>(devUi, "runtimeRef", null);
-  const pendingModelPreferenceRef = useDevUiRef<LlmApiRuntime | null>(devUi, "pendingModelPreferenceRef", null);
+  const pendingModelPreferenceRef = useDevUiRef<ConsoleRuntime | null>(devUi, "pendingModelPreferenceRef", null);
   const sessionBuildEpoch = useDevUiRef(devUi, "sessionBuildEpoch", 0);
   // A selection that arrived mid-turn. NEVER reconfigure mid-turn; this is
   // flushed to the live runtime in send()'s completion path, where busy flips
@@ -2101,6 +2102,19 @@ export function ChatScreen({
     }
     if (targetProvider !== undefined && !PROVIDERS.some((provider) => provider.id === targetProvider)) {
       appendEntry({ kind: "notice", text: `Unsupported provider: ${targetProvider}`, turn: turn.current });
+      return;
+    }
+    if (targetProvider !== undefined && targetProvider !== currentProvider
+      && (isClaudeSubscriptionProvider(targetProvider) || isClaudeSubscriptionProvider(currentProvider))) {
+      // The Claude subscription runs on a different runtime than the API
+      // providers, so it cannot be swapped into a live conversation.
+      const label = PROVIDERS.find((candidate) => candidate.id === targetProvider)?.label ?? targetProvider;
+      appendEntry({
+        kind: "notice",
+        text: `${label} starts with a new chat`,
+        detail: "Saved for next time. Run /new to use it.",
+        turn: turn.current,
+      });
       return;
     }
     if (targetProvider !== undefined && targetProvider !== currentProvider) {

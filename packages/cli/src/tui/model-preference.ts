@@ -1,12 +1,12 @@
-import { CodexCatalogRefreshError, createConsoleRuntime, type CodexCatalogModel, type LlmApiRuntime, type RuntimeConfig } from "@0/core";
+import { CodexCatalogRefreshError, createConsoleRuntime, type CodexCatalogModel, type ConsoleRuntime, type ConsoleRuntimeConfig } from "@0/core";
 import { getSettings, updateSetting } from "./settings-store.js";
 import type { ModelPreference } from "./settings.js";
 
 /** Restore only a choice applied to this exact connection; never infer model access from its name. */
 export async function createPreferredConsoleRuntime(
-  config: Partial<RuntimeConfig>,
+  config: ConsoleRuntimeConfig,
   options: { inheritedConnectionIdentity?: string; onDiscoveryError?: (error: unknown) => void } = {},
-): Promise<{ runtime: LlmApiRuntime; explicitChoice: boolean }> {
+): Promise<{ runtime: ConsoleRuntime; explicitChoice: boolean }> {
   const env = config.env ?? process.env;
   const envModel = env["ZERO_MODEL"]?.trim();
   const envProvider = env["ZERO_SELECTED_PROVIDER"]?.trim() || env["ZERO_PROVIDER"]?.trim() || env["ZERO_FORCE_PROVIDER"]?.trim();
@@ -14,8 +14,8 @@ export async function createPreferredConsoleRuntime(
   // A provider pin chooses a connection; only an explicit model pins its selection.
   const explicitChoice = (!inherited && config.model !== undefined) || Boolean(envModel);
   if (inherited && (envModel || envProvider)) config = { ...config, model: undefined, provider: undefined };
-  if (config.provider === undefined && envProvider) config = { ...config, provider: envProvider as RuntimeConfig["provider"] };
-  let runtime: LlmApiRuntime | undefined;
+  if (config.provider === undefined && envProvider) config = { ...config, provider: envProvider as ConsoleRuntimeConfig["provider"] };
+  let runtime: ConsoleRuntime | undefined;
   let retainedModel = false;
 
   if (inherited && !envModel && !envProvider) {
@@ -29,7 +29,7 @@ export async function createPreferredConsoleRuntime(
     const saved = getSettings().modelPreference;
     if (saved && (config.provider === undefined || config.provider === saved.providerId)) {
       try {
-        const candidate = createConsoleRuntime({ ...config, model: saved.model, provider: saved.providerId as RuntimeConfig["provider"] });
+        const candidate = createConsoleRuntime({ ...config, model: saved.model, provider: saved.providerId as ConsoleRuntimeConfig["provider"] });
         if (candidate.connectionIdentity() === saved.connectionIdentity) {
           runtime = candidate;
           retainedModel = true;
@@ -64,7 +64,7 @@ export async function createPreferredConsoleRuntime(
 }
 
 /** Call only after an explicit choice was successfully applied, never while staging it. */
-export function saveAppliedModelPreference(runtime: LlmApiRuntime): boolean {
+export function saveAppliedModelPreference(runtime: ConsoleRuntime): boolean {
   const connectionIdentity = runtime.connectionIdentity();
   if (!connectionIdentity) return false;
   const preference: ModelPreference = {

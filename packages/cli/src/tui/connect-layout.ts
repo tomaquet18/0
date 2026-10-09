@@ -55,7 +55,7 @@ function cells(value: unknown, fallback = 0): number {
  * The provider table owns the protocol taxonomy. OAuth entries launch their
  * provider sign-in flow; only API-key entries can enter the generic secret field.
  */
-export type AuthKind = "api-key" | "oauth";
+export type AuthKind = "api-key" | "oauth" | "cli";
 
 
 
@@ -68,6 +68,7 @@ export const RECOMMENDED_IDS: readonly string[] = ["anthropic", "openai"];
 /** Short acquisition instructions shown in the selected provider's detail. */
 const PROVIDER_SUBTITLE: Record<string, string> = {
   "chatgpt-codex": "Sign in with your ChatGPT subscription.",
+  "claude-code": "Use your Claude subscription through the local claude CLI.",
   anthropic: "Get a key at console.anthropic.com.",
   openai: "Get a key at platform.openai.com/api-keys.",
 };
@@ -79,7 +80,7 @@ export function authKindFor(id: string): AuthKind {
 
 /** The short, right-aligned auth hint on a provider row. */
 export function authHintLabel(auth: AuthKind): string {
-  return auth === "oauth" ? "OAuth" : "API key";
+  return auth === "oauth" ? "OAuth" : auth === "cli" ? "Local CLI" : "API key";
 }
 
 export interface ConnectGroup {
@@ -226,7 +227,7 @@ export function buildConnectRows({
 
   pushGroup(POPULAR_GROUP, recommended);
   pushGroup(ALL_GROUP, rest);
-  pushGroup(SUBSCRIPTION_GROUP, [...byId.values()].filter((provider) => provider.auth === "oauth"));
+  pushGroup(SUBSCRIPTION_GROUP, [...byId.values()].filter((provider) => provider.auth === "oauth" || provider.auth === "cli"));
   return rows;
 }
 
@@ -399,10 +400,13 @@ export function connectDetailLines(
   // not a device-code flow where the operator types a code — name it honestly.
   const oauthVerb =
     PROVIDER_DEVICE_AUTH[provider.id]?.kind === "pkce-loopback" ? "browser sign-in" : "device sign-in";
-  push(provider.auth === "oauth" ? `OAuth · ${oauthVerb}` : "API key", "text");
+  push(provider.auth === "oauth" ? `OAuth · ${oauthVerb}` : provider.auth === "cli" ? "Local claude CLI · no stored credentials" : "API key", "text");
 
   separate();
-  if (provider.connected) {
+  if (provider.connected && provider.auth === "cli") {
+    push(`Found the ${provider.via ?? "CLI"} on this machine.`, "ok");
+    push("Its login is checked when a chat starts.", "muted");
+  } else if (provider.connected) {
     if (provider.source === "env") {
       push(`Using key from ${provider.via ?? "the environment"}.`, "ok");
     } else {
@@ -420,7 +424,7 @@ export function connectDetailLines(
   separate();
   if (!provider.connected) {
     push(
-      provider.auth === "oauth" ? "Sign in opens your browser." : "Enter to paste a key.",
+      provider.auth === "oauth" ? "Sign in opens your browser." : provider.auth === "cli" ? "Install Claude Code, then run `claude login`." : "Enter to paste a key.",
       "muted",
     );
   }

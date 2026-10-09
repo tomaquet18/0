@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { LlmApiRuntime, createConsoleRuntime } from "@0/core";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { ClaudeSubscriptionRuntime, LlmApiRuntime, createConsoleRuntime } from "@0/core";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { __resetSettingsStoreForTests, configureSettingsStore, getSettings } from "./settings-store.js";
@@ -111,4 +111,27 @@ it("does not infer access from a historical default when fresh account discovery
   catalog.mockResolvedValue([]);
   await expect(createPreferredConsoleRuntime({ env })).rejects.toThrow("no available models");
   expect(getSettings().modelPreference).toBeNull();
+});
+
+it("selects the Claude subscription CLI from ZERO_PROVIDER or a saved choice, with no API key", async () => {
+  // A fake claude binary on PATH; nothing is ever spawned by these calls.
+  const bin = join(isolated.homeDir, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, process.platform === "win32" ? "claude.exe" : "claude"), "");
+  const env = { ...baseEnv, PATH: bin, Path: bin };
+  const pinned = await createPreferredConsoleRuntime({ env: { ...env, ZERO_PROVIDER: "claude-code", ZERO_MODEL: "opus" } });
+  expect(pinned.runtime).toBeInstanceOf(ClaudeSubscriptionRuntime);
+  expect(pinned.runtime.getConfigurationDiagnostics()).toMatchObject({ valid: true, provider: "claude-code" });
+  expect(pinned.runtime.resolvedModel()).toBe("opus");
+  expect(saveAppliedModelPreference(pinned.runtime)).toBe(true);
+
+  __resetSettingsStoreForTests();
+  configureSettingsStore({ homeDir: isolated.homeDir, projectDir: isolated.homeDir });
+  const restored = await createPreferredConsoleRuntime({ env });
+  expect(restored.runtime).toBeInstanceOf(ClaudeSubscriptionRuntime);
+  expect(restored.runtime.resolvedModel()).toBe("opus");
+
+  // Without the CLI the provider fails fast instead of falling back silently.
+  expect(() => createConsoleRuntime({ provider: "claude-code", env: { ...baseEnv, PATH: join(bin, "none"), Path: join(bin, "none") } }))
+    .toThrow(/Claude Code CLI on PATH/);
 });

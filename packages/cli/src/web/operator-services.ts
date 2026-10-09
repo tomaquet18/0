@@ -3,11 +3,12 @@ import { realpathSync, statSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
-  LlmApiRuntime, createConsoleRuntime, CodexCatalogRefreshError, DEFAULT_REGISTRY_URL,
+  LlmApiRuntime, ClaudeSubscriptionRuntime, createConsoleRuntime, CodexCatalogRefreshError, DEFAULT_REGISTRY_URL,
+  CLAUDE_CODE_MODELS, CLAUDE_CODE_PROVIDER_ID, isClaudeSubscriptionProvider,
   TOOL_DEFINITIONS, getToolsForRole, aggregateCapabilities, disable, readEnablement, writeEnablement,
   listInstalledPluginIds, pluginsRootDir, readInstalledPlugin, isSafePluginId,
   listProjectReviewChecks, updateProjectReviewChecks,
-  type NativeRuntime, type RuntimeConfig, type ReviewCheckMutation,
+  type ConsoleRuntime, type ConsoleRuntimeConfig, type NativeRuntime, type RuntimeConfig, type ReviewCheckMutation,
 } from "@0/core";
 import { VERSION, modelProvider, type ConsoleRuntimeSelection, type ConsoleRuntimeSnapshot } from "@0/shared";
 import {
@@ -39,8 +40,8 @@ import { consoleExecutionProfile } from "../console-execution.js";
 
 const MODEL_ROLES = ["discovery", "attack", "verify", "report", "audit", "review"];
 const reservedToolNames = Object.values(TOOL_DEFINITIONS).map((tool) => tool.name);
-const runtimeEnvironments = new WeakMap<LlmApiRuntime, Record<string, string>>();
-const runtimeContextLimits = new WeakMap<LlmApiRuntime, number>();
+const runtimeEnvironments = new WeakMap<ConsoleRuntime, Record<string, string>>();
+const runtimeContextLimits = new WeakMap<ConsoleRuntime, number>();
 let pluginManager: SessionPluginHostManager | undefined;
 let pluginManagerPromise: Promise<SessionPluginHostManager> | undefined;
 let isTurnActive: () => boolean = () => false;
@@ -102,7 +103,7 @@ function publicMessage(error: unknown): string {
     .replace(/([?&](?:api[_-]?key|access_token|refresh_token|id_token|token|secret|password)=)[^&\s"'<>]+/gi, "$1[redacted]").slice(0, 4_000);
 }
 
-function runtimeDiagnostics(runtime: LlmApiRuntime) {
+function runtimeDiagnostics(runtime: ConsoleRuntime) {
   const diagnostics = runtime.getConfigurationDiagnostics();
   return {
     valid: diagnostics.valid,
@@ -112,7 +113,9 @@ function runtimeDiagnostics(runtime: LlmApiRuntime) {
 }
 
 /** Inspect connection configuration without choosing or requesting an inference model. */
-function connectionProbeRuntime(providerId: string, env: Record<string, string>): LlmApiRuntime {
+function connectionProbeRuntime(providerId: string, env: Record<string, string>): ConsoleRuntime {
+  // The subscription CLI holds no credentials here; probing only resolves the binary.
+  if (isClaudeSubscriptionProvider(providerId)) return new ClaudeSubscriptionRuntime({ env });
   return new LlmApiRuntime({
     type: "api", timeout: 300_000, provider: providerId as RuntimeConfig["provider"], env,
     // OpenAI has no default model. Like accessibleProviders(), use an explicit
@@ -125,7 +128,7 @@ function connectionProbeRuntime(providerId: string, env: Record<string, string>)
 export function describeWebConsoleRuntime(runtime: NativeRuntime): ConsoleRuntimeSnapshot {
   const providerId = runtime.resolvedProvider?.() ?? "unknown";
   const model = runtime.resolvedModel?.() ?? "unknown";
-  const api = runtime instanceof LlmApiRuntime ? runtime : undefined;
+  const api = runtime instanceof LlmApiRuntime || runtime instanceof ClaudeSubscriptionRuntime ? runtime : undefined;
   const diagnostics = api ? runtimeDiagnostics(api) : { valid: true, reason: null, message: null };
   return {
     providerId, providerLabel: PROVIDERS.find((provider) => provider.id === providerId)?.label ?? providerId,
@@ -158,7 +161,7 @@ function validateSelection(selection: ConsoleRuntimeSelection): void {
   for (const key of Object.keys(selection.agentModels ?? {})) if (!/^[a-z][a-z0-9_-]{0,63}$/.test(key)) throw new OperatorError(400, "invalid_role", "Invalid model role.");
 }
 
-async function validateRuntimeModels(runtime: LlmApiRuntime): Promise<void> {
+async function validateRuntimeModels(runtime: ConsoleRuntime): Promise<void> {
   const diagnostics = runtime.getConfigurationDiagnostics();
   if (!diagnostics.valid) throw new OperatorError(409, "provider_not_ready", publicMessage(diagnostics.fatalError ?? "Connect the selected provider first."));
   if (diagnostics.provider === "chatgpt-codex") {
@@ -181,11 +184,11 @@ async function validateRuntimeModels(runtime: LlmApiRuntime): Promise<void> {
   }
 }
 
-export async function createWebConsoleRuntime(selection: ConsoleRuntimeSelection = {}): Promise<{ runtime: LlmApiRuntime; info: ConsoleRuntimeSnapshot }> {
+export async function createWebConsoleRuntime(selection: ConsoleRuntimeSelection = {}): Promise<{ runtime: ConsoleRuntime; info: ConsoleRuntimeSnapshot }> {
   validateSelection(selection);
   const env = webRuntimeEnv();
   const { runtime } = await createPreferredConsoleRuntime({
-    provider: selection.providerId as RuntimeConfig["provider"], model: selection.model,
+    provider: selection.providerId as ConsoleRuntimeConfig["provider"], model: selection.model,
     agentModels: selection.agentModels, singleModel: selection.singleModel, autoRoute: selection.autoRoute, env,
   });
   await validateRuntimeModels(runtime);
@@ -198,7 +201,7 @@ export async function createWebConsoleRuntime(selection: ConsoleRuntimeSelection
   return { runtime, info: describeWebConsoleRuntime(runtime) };
 }
 
-export async function applyWebConsoleRuntimeSelection(runtime: LlmApiRuntime, selection: ConsoleRuntimeSelection): Promise<ConsoleRuntimeSnapshot> {
+export async function applyWebConsoleRuntimeSelection(runtime: ConsoleRuntime, selection: ConsoleRuntimeSelection): Promise<ConsoleRuntimeSnapshot> {
   validateSelection(selection);
   const currentProvider = runtime.resolvedProvider();
   let providerId = selection.providerId;
@@ -207,11 +210,15 @@ export async function applyWebConsoleRuntimeSelection(runtime: LlmApiRuntime, se
     if (inferred !== "unknown" && inferred !== currentProvider && !(currentProvider === "chatgpt-codex" && inferred === "openai")) providerId = inferred;
   }
   const targetProvider = providerId ?? currentProvider;
-  let candidate: LlmApiRuntime;
+  if (targetProvider !== currentProvider && (isClaudeSubscriptionProvider(targetProvider) || isClaudeSubscriptionProvider(currentProvider))) {
+    // Different runtime implementations; a live conversation cannot be moved across.
+    throw new OperatorError(409, "new_session_required", "Switching between Claude (subscription) and an API provider needs a new chat.");
+  }
+  let candidate: ConsoleRuntime;
   if (targetProvider !== currentProvider) {
     const env = webRuntimeEnv();
     const created = await createPreferredConsoleRuntime({
-      provider: targetProvider as RuntimeConfig["provider"], model: selection.model, env,
+      provider: targetProvider as ConsoleRuntimeConfig["provider"], model: selection.model, env,
       ...runtime.modelSelection(), ...selection,
     });
     candidate = created.runtime;
@@ -288,6 +295,11 @@ export class WebOperatorServices {
     if (id === "chatgpt-codex") return this.#publicAuth(this.#codex.status());
     const flow = this.#auth.get(id);
     if (flow?.status.phase === "running") return { ...flow.status, lines: [...flow.status.lines] };
+    if (isClaudeSubscriptionProvider(id)) {
+      return webAuthStatus(configured
+        ? { phase: "connected", message: "Uses the login of the local claude CLI. 0 stores no credentials; the first chat verifies access.", lines: [] }
+        : { phase: "idle", message: "Install Claude Code on this computer and run `claude login`.", lines: [] }, false);
+    }
     if (configured) return webAuthStatus({ phase: "connected", message: "Credentials are configured. The first request verifies account access.", lines: [] }, Boolean(PROVIDER_DEVICE_AUTH[id]));
     if (flow && flow.status.phase !== "connected") return { ...flow.status, lines: [...flow.status.lines] };
     return webAuthStatus({ phase: "idle", message: "Not connected.", lines: [] }, Boolean(PROVIDER_DEVICE_AUTH[id]));
@@ -297,11 +309,12 @@ export class WebOperatorServices {
     const env = webRuntimeEnv();
     const store = loadAccountStore();
     const configs = loadConnectionConfigs();
+    const states = new Map(providerStates(env).map((state) => [state.id, state]));
     return PROVIDERS.map((info) => {
       let diagnostics: { valid: boolean; reason: string | null; message: string | null } = {
         valid: false, reason: "missing_key", message: "Connect this provider in the browser to configure credentials.",
       };
-      const via = info.envVars.find((key) => Boolean(env[key]?.trim()));
+      const via = info.cliBinary ? states.get(info.id)?.via : info.envVars.find((key) => Boolean(env[key]?.trim()));
       const environment = info.envVars.some((key) => Boolean(process.env[key]?.trim()));
       const accounts = listAccounts(store, info.id).map(({ accountId, record, active }) => ({
         accountId, kind: record.kind, active, label: record.kind === "oauth" ? record.identity?.email ?? record.identity?.label ?? accountId : accountId,
@@ -316,7 +329,7 @@ export class WebOperatorServices {
       }
       return {
         id: info.id, label: info.label, methods: info.methods, configured,
-        source: configured ? environment ? "environment" : store.providers[info.id] ? "account-store" : "codex-file" : null,
+        source: configured ? info.cliBinary ? "local-cli" : environment ? "environment" : store.providers[info.id] ? "account-store" : "codex-file" : null,
         diagnostics, accounts, configuration: configs[info.id] ?? {}, auth: this.#authStatus(info.id, configured),
       };
     });
@@ -356,6 +369,9 @@ export class WebOperatorServices {
       source: "public-catalog" as const,
     }));
     for (const model of accountModels) rows.push({ id: model.id, provider: "chatgpt-codex", price: "Included in subscription", contextWindowTokens: model.contextTokens ?? null, source: "account" });
+    if (states.some((state) => state.id === CLAUDE_CODE_PROVIDER_ID && state.configured)) {
+      for (const model of CLAUDE_CODE_MODELS) rows.push({ id: model.id, provider: CLAUDE_CODE_PROVIDER_ID, price: "Included in subscription", contextWindowTokens: resolveContextLimit({ modelId: model.id, providerId: CLAUDE_CODE_PROVIDER_ID })?.tokens ?? null, source: "account" });
+    }
     const azureModel = env.AZURE_OPENAI_MODEL;
     if (azureModel && states.some((state) => state.id === "azure" && state.configured) && !rows.some((model) => model.provider === "azure" && model.id === azureModel)) rows.push({ id: azureModel, provider: "azure", price: "Unknown deployment rate", contextWindowTokens: null, source: "public-catalog" });
     return { models: rows.filter((model) => !providerId || model.provider === providerId), providerId: providerId ?? null, diagnostics, roles: MODEL_ROLES };
@@ -377,6 +393,7 @@ export class WebOperatorServices {
     }
     let store = loadAccountStore();
     if (action === "connect") {
+      if (info.cliBinary) throw new OperatorError(400, "unsupported_auth", "This provider uses the local claude CLI login. Run `claude login` on this computer.");
       if (!info.methods.includes("api-key")) throw new OperatorError(400, "unsupported_auth", "Use this provider's browser sign-in flow.");
       const secret = text(body.apiKey, "API key", 16_384);
       if (/[\s\x00-\x1f\x7f]/.test(secret)) throw new OperatorError(400, "invalid_key", "API keys must not contain whitespace or control characters.");

@@ -71,6 +71,17 @@ export { sendPrompt, extractResponseText, isMcpTarget, fetchScoped, type ScopedH
 export { createRuntime, ProcessRuntime, LlmApiRuntime, QuotaExhaustedError, OperatorAbortError, parseUsageLimitReached, OpenRouterRuntime, DEFAULT_ENSEMBLE_MODELS, RUNTIME_REGISTRY, pickRuntimeForStage, detectAvailableRuntimes, getRuntimeInfo } from "./runtime/index.js";
 export type { Runtime, RuntimeConfig, RuntimeContext, RuntimeResult, RuntimeType, NativeRuntime, NativeMessage, NativeContentBlock, NativeToolDef, NativeRuntimeResult, NativeOutputCapCheckpoint, OpenRouterConfig, UsageLimitDetails } from "./runtime/index.js";
 export { CodexCatalogRefreshError, loadCodexModelCatalog } from "./runtime/codex-models.js";
+export { CliNativeRuntime } from "./runtime/cli-native.js";
+export {
+  ClaudeSubscriptionRuntime,
+  CLAUDE_CODE_PROVIDER_ID,
+  CLAUDE_CODE_PROVIDER_LABEL,
+  CLAUDE_CODE_DEFAULT_MODEL,
+  CLAUDE_CODE_MODELS,
+  isClaudeSubscriptionProvider,
+} from "./runtime/claude-subscription.js";
+export type { ClaudeSubscriptionDiagnostics } from "./runtime/claude-subscription.js";
+export { resolveCliCommand } from "./runtime/cli-command.js";
 export type { CodexCatalogModel } from "./runtime/codex-models.js";
 export { snapshotSmolvmWorkspace } from "./runtime/smolvm-workspace.js";
 export { runSmolvmWorkbench } from "./runtime/smolvm-workbench.js";
@@ -2368,6 +2379,8 @@ export {
   toToolContextJevRuntime,
 } from "./console/index.js";
 export type {
+  ConsoleRuntime,
+  ConsoleRuntimeConfig,
   ConsoleConversationHistory,
   ConsoleSession,
   ConsoleEngagementSelection,

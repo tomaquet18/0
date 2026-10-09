@@ -412,6 +412,12 @@ export function ConnectScreen({ frame, onBack, onSkip, onExit, recovery, onConne
   };
 
   const beginConnect = (provider: ConnectProvider) => {
+    if (provider.auth === "cli") {
+      // Nothing to store: the local CLI owns the login. A connected entry was
+      // handled by activateProvider; here the binary is missing.
+      setNotice({ message: provider.hint, error: true });
+      return;
+    }
     if (provider.auth === "oauth") {
       beginOauth(provider);
       return;

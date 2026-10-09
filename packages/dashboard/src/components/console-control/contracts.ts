@@ -15,7 +15,7 @@ export interface RuntimeInfo {
 export interface RuntimeSelection { providerId?: string; model?: string; agentModels?: Record<string, string>; singleModel?: boolean; autoRoute?: boolean }
 export interface AuthStatus { phase: string; message: string; lines: string[]; verificationUrl: string | null; userCode: string | null; available: boolean }
 export interface Provider {
-  id: string; label: string; methods: ("api-key" | "oauth")[]; configured: boolean; source: string | null;
+  id: string; label: string; methods: ("api-key" | "oauth" | "cli")[]; configured: boolean; source: string | null;
   diagnostics: RuntimeInfo["diagnostics"];
   accounts: { accountId: string; kind: string; active: boolean; label: string }[];
   auth: AuthStatus;

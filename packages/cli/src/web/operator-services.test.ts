@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pluginsRootDir, readEnablement, LlmApiRuntime } from "@0/core";
+import { pluginsRootDir, readEnablement, LlmApiRuntime, ClaudeSubscriptionRuntime } from "@0/core";
 import { saveSession, loadSession, type StoredSession } from "../tui/session-store.js";
 import { PROVIDERS } from "../tui/provider-status.js";
 import { applyWebConsoleRuntimeSelection, describeWebConsoleRuntime, savedWebRuntimeSelection, flushWebConsolePlugins, WebOperatorServices } from "./operator-services.js";
@@ -140,5 +140,48 @@ describe("web isolated plugin boundaries", () => {
     execution.profile = "local";
     expect(await flushWebConsolePlugins()).toEqual([]);
     expect(execution.flush).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Claude subscription (local claude CLI) in the web console", () => {
+  function fakeClaudeOnPath(): string {
+    const bin = join(testHome, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, process.platform === "win32" ? "claude.exe" : "claude"), "");
+    vi.stubEnv("PATH", bin);
+    vi.stubEnv("Path", bin);
+    return bin;
+  }
+
+  it("lists the provider and its models when the claude binary is present, with no stored credentials", async () => {
+    fakeClaudeOnPath();
+    const services = new WebOperatorServices();
+    const providers = (await services.handle("/api/console/providers", "GET", undefined, new URLSearchParams()))?.data as {
+      providers: Array<{ id: string; methods: string[]; configured: boolean; source: string | null; diagnostics: { valid: boolean }; auth: { phase: string } }>;
+    };
+    expect(providers.providers.find((row) => row.id === "claude-code")).toMatchObject({
+      methods: ["cli"], configured: true, source: "local-cli", diagnostics: { valid: true }, auth: { phase: "connected" },
+    });
+    const models = (await services.handle("/api/console/models", "GET", undefined, new URLSearchParams("providerId=claude-code")))?.data as {
+      models: Array<{ id: string; provider: string; price: string }>;
+    };
+    expect(models.models.map((row) => row.id)).toEqual(["cli-default", "opus", "sonnet", "haiku"]);
+    expect(models.models.every((row) => row.price === "Included in subscription")).toBe(true);
+    // Nothing can be stored for it: the CLI owns the login.
+    const connect = await services.handle("/api/console/connections", "POST", { providerId: "claude-code", action: "connect", apiKey: "x" }, new URLSearchParams());
+    expect(connect?.status).toBe(400);
+    expect(JSON.stringify(connect?.data)).toContain("claude login");
+  });
+
+  it("describes a subscription runtime and refuses moving a live conversation across runtimes", async () => {
+    fakeClaudeOnPath();
+    const runtime = new ClaudeSubscriptionRuntime({ model: "sonnet" });
+    const snapshot = describeWebConsoleRuntime(runtime);
+    expect(snapshot).toMatchObject({ providerId: "claude-code", providerLabel: "Claude (subscription)", model: "sonnet", configured: true, reasoning: null });
+    await expect(applyWebConsoleRuntimeSelection(runtime, { providerId: "openai", model: "gpt-6.1-sol" })).rejects.toThrow(/new chat/);
+    const api = new LlmApiRuntime({ type: "api", timeout: 300_000, provider: "openai", model: "gpt-6.1-sol" });
+    await expect(applyWebConsoleRuntimeSelection(api, { providerId: "claude-code", model: "opus" })).rejects.toThrow(/new chat/);
+    const switched = await applyWebConsoleRuntimeSelection(runtime, { model: "opus" });
+    expect(switched.model).toBe("opus");
   });
 });

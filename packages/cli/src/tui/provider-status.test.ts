@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { PROVIDERS, isProviderConfigured, providerStates, providerSupportsMethod } from "./provider-status.js";
 
@@ -19,7 +22,8 @@ describe("PROVIDERS", () => {
       expect(provider.label.length).toBeGreaterThan(0);
       // A provider with no env var must document the file it reads instead,
       // or the picker has no way to tell an operator how to turn it on.
-      expect(provider.envVars.length > 0 || (provider.fileSource ?? "").length > 0).toBe(true);
+      // A local-CLI provider documents the binary it drives instead.
+      expect(provider.envVars.length > 0 || (provider.fileSource ?? "").length > 0 || (provider.cliBinary ?? "").length > 0).toBe(true);
       expect(provider.hint.length).toBeGreaterThan(0);
     }
   });
@@ -30,7 +34,10 @@ describe("PROVIDERS", () => {
 
   it("names the variable it wants in the hint, so the hint is actionable", () => {
     for (const provider of PROVIDERS) {
-      const named = provider.envVars.some((name) => provider.hint.includes(name));
+      // A local-CLI provider has no variable; its hint names the login command.
+      const named = provider.cliBinary
+        ? provider.hint.includes(`${provider.cliBinary} login`)
+        : provider.envVars.some((name) => provider.hint.includes(name));
       // chatgpt-codex is allowed to point at `codex login` instead, but it
       // still names one of its tokens.
       expect(named).toBe(true);
@@ -41,7 +48,7 @@ describe("PROVIDERS", () => {
     for (const provider of PROVIDERS) {
       expect(provider.methods.length).toBeGreaterThan(0);
       for (const method of provider.methods) {
-        expect(["api-key", "oauth"]).toContain(method);
+        expect(["api-key", "oauth", "cli"]).toContain(method);
       }
     }
   });
@@ -67,7 +74,10 @@ describe("PROVIDERS", () => {
     expect(byId.get("kimi")?.methods).toEqual(["oauth", "api-key"]);
     expect(byId.get("openrouter")?.methods).toEqual(["oauth", "api-key"]);
     expect(byId.get("anthropic")?.methods).toEqual(["api-key"]);
-    const oauthCapable = new Set(["chatgpt-codex", "copilot", "google", "xai", "kimi", "openrouter"]);
+    // The Claude subscription stores nothing: the local claude CLI owns the login.
+    expect(byId.get("claude-code")?.methods).toEqual(["cli"]);
+    expect(byId.get("claude-code")?.envVars).toEqual([]);
+    const oauthCapable = new Set(["chatgpt-codex", "copilot", "google", "xai", "kimi", "openrouter", "claude-code"]);
     for (const provider of PROVIDERS) {
       if (oauthCapable.has(provider.id)) continue;
       expect(provider.methods).toEqual(["api-key"]);
@@ -92,6 +102,8 @@ describe("PROVIDERS", () => {
         "anthropic",
         "azure",
         "chatgpt-codex",
+        // Not an ApiProvider: the console builds ClaudeSubscriptionRuntime for it.
+        "claude-code",
         "copilot",
         "deepseek",
         "google",
@@ -220,6 +232,30 @@ describe("isProviderConfigured", () => {
     const env = { ANTHROPIC_API_KEY: "sk-ant", OPENAI_API_KEY: "", XAI_API_KEY: "xk" };
     for (const state of providerStates(env)) {
       expect(isProviderConfigured(state.id, env)).toBe(state.configured);
+    }
+  });
+});
+
+describe("claude-code (local CLI) provider state", () => {
+  it("is configured only when the claude binary is found, never from env vars", () => {
+    const found = providerStates({ ANTHROPIC_API_KEY: "sk-ant-x" }, (binary) => binary === "claude");
+    expect(found.find((state) => state.id === "claude-code")).toMatchObject({ configured: true, via: "claude CLI" });
+    const missing = providerStates({ ANTHROPIC_API_KEY: "sk-ant-x" }, () => false);
+    expect(missing.find((state) => state.id === "claude-code")?.configured).toBe(false);
+    // An API key never stands in for the subscription login.
+    expect(missing.find((state) => state.id === "anthropic")?.configured).toBe(true);
+    expect(isProviderConfigured("claude-code", {}, () => true)).toBe(true);
+    expect(isProviderConfigured("claude-code", {}, () => false)).toBe(false);
+  });
+
+  it("finds the binary on the PATH of the given environment", () => {
+    const dir = mkdtempSync(join(tmpdir(), "0-claude-bin-"));
+    try {
+      writeFileSync(join(dir, process.platform === "win32" ? "claude.exe" : "claude"), "");
+      expect(isProviderConfigured("claude-code", { PATH: dir, Path: dir })).toBe(true);
+      expect(isProviderConfigured("claude-code", { PATH: join(dir, "missing"), Path: join(dir, "missing") })).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

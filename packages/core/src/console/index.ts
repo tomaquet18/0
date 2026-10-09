@@ -17,6 +17,8 @@ export type {
   SessionBudget,
 } from "./jev-runtime.js";
 export type {
+  ConsoleRuntime,
+  ConsoleRuntimeConfig,
   ConsoleConversationHistory,
   ConsoleEngagementSelection,
   ConsoleSession,

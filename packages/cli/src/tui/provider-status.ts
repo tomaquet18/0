@@ -18,9 +18,14 @@
  * this table by re-reading that file rather than by analogy.
  */
 
+import { CLAUDE_CODE_PROVIDER_ID, CLAUDE_CODE_PROVIDER_LABEL, resolveCliCommand } from "@0/core";
 
-/** The credential protocols a provider can be authenticated with. */
-export type AuthMethod = "api-key" | "oauth";
+/**
+ * The credential protocols a provider can be authenticated with. `cli` means
+ * 0 holds no credential at all: it drives a locally installed, already
+ * logged-in vendor CLI that owns the account.
+ */
+export type AuthMethod = "api-key" | "oauth" | "cli";
 
 export interface ProviderInfo {
   /** Provider id as the runtime names it, e.g. "anthropic". */
@@ -60,6 +65,11 @@ export interface ProviderInfo {
    * should ask the runtime, not this table.
    */
   fileSource?: string;
+  /**
+   * Set only for `cli` providers: the binary that must be on PATH. Such a
+   * provider has no env vars; it is configured when the binary resolves.
+   */
+  cliBinary?: string;
 }
 
 export interface ProviderState extends ProviderInfo {
@@ -191,6 +201,17 @@ const PROVIDER_DEFS: readonly Omit<ProviderInfo, "auth">[] = [
     hint: "sign in with your Google account (browser sign-in), or set ZERO_GEMINI_OAUTH_REFRESH_TOKEN=... for Gemini Code Assist (project override: GOOGLE_CLOUD_PROJECT / ZERO_GEMINI_PROJECT)",
   },
   {
+    id: CLAUDE_CODE_PROVIDER_ID,
+    label: CLAUDE_CODE_PROVIDER_LABEL,
+    // No credentials are stored or read: the local `claude` CLI owns the
+    // login, and the console drives it as a subprocess (tools still execute
+    // through 0's gates). Anthropic OAuth tokens never enter 0's store.
+    methods: ["cli"],
+    envVars: [],
+    cliBinary: "claude",
+    hint: "install Claude Code and run `claude login`; 0 uses your Claude subscription through the local claude CLI",
+  },
+  {
     id: "anthropic",
     label: "Anthropic",
     // API key only for now. The schema supports OAuth, but Anthropic/Claude
@@ -247,24 +268,49 @@ function satisfyingVar(info: ProviderInfo, env: Record<string, string | undefine
   return info.envVars.find((name) => hasCredential(env[name]));
 }
 
-/** Pure over an injected environment so it is testable. */
-export function providerStates(env: Record<string, string | undefined>): ProviderState[] {
+/** Is `binary` on the PATH of `env`? Injectable so callers/tests stay pure. */
+export type CliProbe = (binary: string, env: Record<string, string | undefined>) => boolean;
+
+const cliProbeCache = new Map<string, boolean>();
+/** Default probe: a cached PATH lookup (no process is spawned). */
+export const defaultCliProbe: CliProbe = (binary, env) => {
+  const pathValue = env["Path"] ?? env["PATH"] ?? "";
+  const key = `${binary}|${pathValue}`;
+  let found = cliProbeCache.get(key);
+  if (found === undefined) {
+    found = resolveCliCommand(binary, { env: env as NodeJS.ProcessEnv }) !== undefined;
+    cliProbeCache.set(key, found);
+  }
+  return found;
+};
+
+/** How `info` is satisfied (env var name, or "<binary> CLI"), if at all. */
+function satisfiedVia(info: ProviderInfo, env: Record<string, string | undefined>, probe: CliProbe): string | undefined {
+  if (info.cliBinary) return probe(info.cliBinary, env) ? `${info.cliBinary} CLI` : undefined;
+  return satisfyingVar(info, env);
+}
+
+/**
+ * Pure over an injected environment so it is testable. `cli` providers are
+ * checked through `probe` (a PATH lookup by default).
+ */
+export function providerStates(env: Record<string, string | undefined>, probe: CliProbe = defaultCliProbe): ProviderState[] {
   // Reads only, and only from `env` — never process.env, so a caller can ask
   // "what would this look like under that environment?" without mutating or
   // depending on the ambient one.
   return PROVIDERS.map((info) => {
-    const via = satisfyingVar(info, env);
+    const via = satisfiedVia(info, env, probe);
     return via === undefined ? { ...info, configured: false } : { ...info, configured: true, via };
   });
 }
 
 /** Is this specific provider usable given the environment? */
-export function isProviderConfigured(providerId: string, env: Record<string, string | undefined>): boolean {
+export function isProviderConfigured(providerId: string, env: Record<string, string | undefined>, probe: CliProbe = defaultCliProbe): boolean {
   // An unknown id is not an error: the model catalog derives providers from
   // the pricing table, which carries vendors with no direct runtime path
   // ("google", "meta", "mistral", "unknown"). Those are simply not
   // configurable here, so the honest answer is false rather than a throw that
   // would take the picker down.
   const info = PROVIDERS.find((candidate) => candidate.id === providerId);
-  return info !== undefined && satisfyingVar(info, env) !== undefined;
+  return info !== undefined && satisfiedVia(info, env, probe) !== undefined;
 }

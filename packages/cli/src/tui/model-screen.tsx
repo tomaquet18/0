@@ -74,7 +74,7 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { CodexCatalogRefreshError, loadCodexModelCatalog, type CodexCatalogModel, type RuntimeConfig } from "@0/core";
+import { CLAUDE_CODE_MODELS, CLAUDE_CODE_PROVIDER_ID, CodexCatalogRefreshError, loadCodexModelCatalog, type CodexCatalogModel, type RuntimeConfig } from "@0/core";
 import { credentialEnvPatch, loadCredentials } from "./credential-store.js";
 import { useKeyboard, usePaste } from "@opentui/react";
 import { decodePasteBytes, TextAttributes } from "@opentui/core";
@@ -371,6 +371,9 @@ export function ModelScreen({
     const catalogRows = [
       ...scoped.filter((model) => model.provider !== "chatgpt-codex"),
       ...(codexModels ?? []).map((model) => ({ id: model.id, provider: "chatgpt-codex", price: "subscription" })),
+      // Claude through the local CLI: the aliases it resolves itself. Kept only
+      // when the claude binary is present (reachableModelCatalog below).
+      ...CLAUDE_CODE_MODELS.map((model) => ({ id: model.id, provider: CLAUDE_CODE_PROVIDER_ID, price: "subscription" })),
     ];
     const codexModelIds = new Set((codexModels ?? []).map((model) => model.id));
     return reachableModelCatalog(catalogRows, states, { env, providerId, codexModelIds })

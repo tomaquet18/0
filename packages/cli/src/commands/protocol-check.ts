@@ -25,6 +25,7 @@ import type { Command } from "commander";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
+  CliNativeRuntime,
   createLiveHttpSender,
   createRuntime,
   LlmApiRuntime,
@@ -64,6 +65,9 @@ function resolveNativeRuntime(runtimeFlag: string | undefined): NativeRuntime {
   if (choice === "auto" || choice === "api") {
     return new LlmApiRuntime({ type: "api", timeout });
   }
+  // The claude subscription CLI is native-capable through CliNativeRuntime;
+  // createRuntime maps it to the single-shot ProcessRuntime.
+  if (choice === "claude") return new CliNativeRuntime({ type: "claude", timeout });
   const rt = createRuntime({
     type: choice as "claude" | "codex" | "gemini",
     timeout,
