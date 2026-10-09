@@ -29,6 +29,79 @@
   <img src="assets/zero-manifesto-movement.webp" alt="Zero manifesto movement" width="100%">
 </p>
 
+## About this fork: Claude subscription support
+
+This fork is based on the **v0.23.0** release of
+[0sec-labs/0](https://github.com/0sec-labs/0). It adds one feature: the chat
+(terminal UI, web console and headless `console --print`) can run on your
+**Claude subscription** through the local [Claude Code](https://docs.claude.com/en/docs/claude-code)
+CLI (`claude -p`), with no Anthropic API key.
+
+- **New provider, "Claude (subscription)"** (`claude-code`). It is available
+  when `claude --version` works and you are signed in to Claude Code. It
+  stores no credentials, because authentication stays in the `claude` CLI.
+- **All four autonomy modes** (`standard`, `copilot`, `yolo`, `recon`) keep the
+  same guarantees as the API path:
+  - Claude Code's built-in tools are disabled.
+  - 0's own tools are exposed to Claude through a session-scoped MCP bridge on
+    `127.0.0.1` with a per-run token.
+  - Every tool call goes through 0's approval, recon, scope and budget gates,
+    and is never executed twice.
+- **Behaves like the API path:**
+  - Responses stream token by token.
+  - 0 stays in charge of context. Compaction or a system prompt change starts
+    a fresh Claude session seeded with 0's transcript.
+  - Token usage is recorded. The cost is shown as `$—`, because subscription
+    use is not billed per token.
+  - On Windows, `claude.cmd` is resolved without going through a shell.
+- **Isolation:** your personal Claude Code settings, hooks, plugins and
+  `CLAUDE.md` files are not loaded, and `ANTHROPIC_API_KEY` is removed from
+  the subprocess.
+- `0 protocol-check --runtime claude` works again.
+
+### Using it
+
+**Terminal UI.** Run `0`, then `/model` → **Claude (subscription)**. Pick
+`cli-default`, `opus`, `sonnet` or `haiku`. If you switch providers in the
+middle of a chat, the new provider applies after `/new`.
+
+**Web console.** Run `0 web`. The provider appears under **Connections** and
+**Models**.
+
+**Headless.**
+
+```bash
+ZERO_PROVIDER=claude-code ZERO_MODEL=sonnet 0 console --print "Review this repository" --mode standard
+```
+
+Each turn sends 0's system prompt and tool list, which is roughly 30–60k input
+tokens. That counts against your subscription's usage limits.
+
+### Building the binary from this fork
+
+The `install.sh` below installs the **official** binary, which does not
+include this feature. To build a self-contained binary from this fork on Linux
+x64, you need Node 24, pnpm 9 and git. Bun 1.3.14 is only needed to compile,
+and the result runs without Node or Bun.
+
+```bash
+git clone https://github.com/tomaquet18/0 && cd 0
+npm install --prefix /tmp/bun-tmp bun@1.3.14
+export PATH=/tmp/bun-tmp/node_modules/.bin:$PATH
+pnpm install --no-frozen-lockfile
+pnpm --filter "@0/cli..." build && pnpm --filter @0/dashboard build
+bash scripts/bun-compile.sh "" dist-bin/0
+cp ~/.0/bin/0 ~/.0/bin/0.official    # optional backup of an existing install
+cp dist-bin/0 ~/.0/bin/0
+```
+
+Do not run `0 upgrade` afterwards: it replaces the binary with the official
+release.
+
+**Known limitation:** on native Windows, the v0.23.0 console fails to start
+with "evolution storage directory must be owner-only", whichever provider you
+use. Use WSL instead.
+
 ## Get started
 
 Install on Apple Silicon macOS or x64/ARM64 Linux:

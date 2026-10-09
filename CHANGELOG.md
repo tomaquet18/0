@@ -12,6 +12,19 @@ on the published npm package and the GitHub Release tag.
 
 ## [Unreleased]
 
+### Added
+
+- Fork (`tomaquet18/0`): "Claude (subscription)" provider (`claude-code`). It
+  runs the console chat through the local Claude Code CLI (`claude -p`) in all
+  autonomy modes, with no API key. 0's tools reach Claude through a
+  session-scoped localhost MCP bridge, so every call still passes the turn
+  engine's approval, recon, scope and budget gates. Claude Code's built-in
+  tools are disabled.
+
+### Fixed
+
+- `protocol-check --runtime claude` now uses the native CLI runtime.
+
 ## [0.23.0] - 2026-10-01
 
 ### Added
